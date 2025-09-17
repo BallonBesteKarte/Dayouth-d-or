@@ -1,0 +1,196 @@
+<!doctype html>
+
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dayouth d'Or — Freundes-Voting</title>
+  <style>
+    :root{font-family:Inter, Roboto, system-ui, -apple-system, 'Segoe UI', Arial; --bg:#0f172a; --card:#0b1220; --muted:#94a3b8; --accent:#7c3aed}
+    html,body{height:100%;margin:0;background:linear-gradient(180deg,#071028 0%,#081124 100%);color:#e6eef8}
+    .wrap{max-width:920px;margin:28px auto;padding:20px}
+    header{display:flex;align-items:center;gap:14px}
+    h1{margin:0;font-size:20px}
+    .card{background:rgba(255,255,255,0.03);padding:18px;border-radius:12px;box-shadow:0 6px 18px rgba(2,6,23,0.6);margin-top:16px}
+    .controls{display:flex;gap:8px;flex-wrap:wrap}
+    input[type=text]{padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit}
+    button{padding:9px 12px;border-radius:9px;border:0;background:var(--accent);color:white;cursor:pointer}
+    button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:inherit}
+    .list{margin-top:12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
+    .entry{background:rgba(255,255,255,0.02);padding:10px;border-radius:8px;display:flex;align-items:center;justify-content:space-between}
+    .btn-vote{padding:8px 10px;border-radius:8px;border:0;cursor:pointer;background:var(--accent);color:white}
+    .stats{margin-top:12px}
+    .bar{height:10px;background:rgba(255,255,255,0.06);border-radius:7px;overflow:hidden;margin-top:8px}
+    .bar > i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),#4f46e5);}
+    .small{font-size:13px;color:var(--muted)}
+    footer{margin-top:18px;color:var(--muted);font-size:13px}
+    .top-winner{padding:12px;border-radius:10px;background:linear-gradient(90deg,rgba(124,58,237,0.12),rgba(79,70,229,0.06));margin-top:10px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Dayouth d'Or — Voting unter Freunden</h1>
+        <div class="small">Füge Namen hinzu, gib jedem Freund eine Stimme — zeige am Ende die Gewinner.</div>
+      </div>
+    </header><section class="card" id="setup">
+  <div class="controls">
+    <input id="nameInput" type="text" placeholder="Name hinzufügen (z. B. Ali)" />
+    <button id="addBtn">Hinzufügen</button>
+    <button id="startBtn" class="ghost">Abstimmung vorbereiten</button>
+    <button id="resetAll" class="ghost">Alles löschen</button>
+  </div>
+  <div class="small" style="margin-top:8px">Tipp: Du kannst die Namen jetzt hinzufügen oder später direkt auf der Wahlseite.</div>
+
+  <div id="namesList" class="list" aria-live="polite"></div>
+</section>
+
+<section class="card" id="voting" style="display:none">
+  <h2 style="margin:0;font-size:16px">Abstimmen</h2>
+  <div class="small">Klicke auf den Namen, um eine Stimme abzugeben. Jede Person kann nur einmal pro Gerät stimmen — du kannst das zurücksetzen, wenn nötig.</div>
+  <div id="votingList" class="list"></div>
+
+  <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+    <button id="endBtn" class="ghost">Abstimmung beenden & Ergebnis anzeigen</button>
+    <button id="clearVotes" class="ghost">Stimmen zurücksetzen</button>
+    <button id="exportBtn" class="ghost">Ergebnis exportieren (JSON)</button>
+  </div>
+
+  <div id="results" class="stats"></div>
+</section>
+
+<footer class="small">Dieses Voting läuft lokal im Browser (keine Anmeldung). Perfekt für kleine Freundesgruppen. Du kannst die Datei teilen oder per USB/WhatsApp weitergeben.</footer>
+
+  </div>  <script>
+    const qs = s => document.querySelector(s)
+    const STORAGE_KEY = 'dayouth_votes_v1'
+
+    function load(){
+      try{
+        const raw = localStorage.getItem(STORAGE_KEY)
+        return raw ? JSON.parse(raw) : {names:[], voted:false}
+      }catch(e){return {names:[], voted:false}}
+    }
+    function save(state){ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); renderAll() }
+
+    let state = load()
+
+    function uid(){ return Math.random().toString(36).slice(2,9) }
+
+    function renderNamesList(){
+      const container = qs('#namesList')
+      container.innerHTML = ''
+      if(state.names.length===0){ container.innerHTML = '<div class="small">Noch keine Namen hinzugefügt.</div>'; return }
+      state.names.forEach(n=>{
+        const div = document.createElement('div'); div.className='entry'
+        div.innerHTML = `<div style="font-weight:600">${escapeHtml(n.name)}</div><div style="display:flex;gap:6px"><button class='ghost' data-id='${n.id}' data-action='edit'>✏️</button><button class='ghost' data-id='${n.id}' data-action='del'>🗑️</button></div>`
+        container.appendChild(div)
+      })
+    }
+
+    function renderVotingList(){
+      const container = qs('#votingList')
+      container.innerHTML = ''
+      state.names.forEach(n=>{
+        const div = document.createElement('div'); div.className='entry'
+        const disabled = state.voted ? 'disabled' : ''
+        div.innerHTML = `<div><div style="font-weight:700">${escapeHtml(n.name)}</div><div class='small'>${n.votes} Stimmen</div></div><div><button class='btn-vote' ${disabled} data-id='${n.id}'>Stimmen</button></div>`
+        container.appendChild(div)
+      })
+      renderResults()
+    }
+
+    function renderResults(){
+      const res = qs('#results')
+      const total = state.names.reduce((s,n)=>s+n.votes,0)
+      if(total===0){ res.innerHTML = '<div class="small">Noch keine Stimmen abgegeben.</div>'; return }
+      const sorted = [...state.names].sort((a,b)=>b.votes-a.votes)
+      const top = sorted[0]
+      const winners = sorted.filter(x=>x.votes===top.votes).map(x=>x.name)
+      const winnerHtml = `<div class="top-winner"><strong>Gewinner:</strong> ${winners.map(escapeHtml).join(', ')} (${top.votes} Stimmen)</div>`
+      let listHtml = '<div style="display:grid;gap:10px;margin-top:8px">'
+      sorted.forEach(n=>{
+        const pct = Math.round((n.votes/total)*100)
+        listHtml += `<div><div style="display:flex;justify-content:space-between"><div>${escapeHtml(n.name)}</div><div>${n.votes} Stimmen • ${pct}%</div></div><div class="bar"><i style="width:${pct}%"></i></div></div>`
+      })
+      listHtml += '</div>'
+      res.innerHTML = winnerHtml + listHtml
+    }
+
+    function renderAll(){ renderNamesList(); renderVotingList() }
+
+    function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]) }
+
+    renderAll()
+
+    qs('#addBtn').addEventListener('click', ()=>{
+      const val = qs('#nameInput').value.trim()
+      if(!val) return alert('Gib einen Namen ein.')
+      state.names.push({id:uid(), name:val, votes:0})
+      qs('#nameInput').value=''
+      save(state)
+    })
+
+    qs('#namesList').addEventListener('click', e=>{
+      const btn = e.target.closest('button')
+      if(!btn) return
+      const id = btn.dataset.id
+      const act = btn.dataset.action
+      if(act==='del'){
+        if(!confirm('Diesen Namen entfernen?')) return
+        state.names = state.names.filter(n=>n.id!==id)
+        save(state)
+      }
+      if(act==='edit'){
+        const newName = prompt('Neuer Name:', state.names.find(n=>n.id===id).name)
+        if(newName){
+          state.names = state.names.map(n=>n.id===id?{...n,name:newName}:n)
+          save(state)
+        }
+      }
+    })
+
+    qs('#startBtn').addEventListener('click', ()=>{
+      qs('#setup').style.display='none'
+      qs('#voting').style.display='block'
+    })
+
+    qs('#resetAll').addEventListener('click', ()=>{
+      if(confirm('Alles wirklich löschen?')){
+        state={names:[],voted:false}
+        save(state)
+      }
+    })
+
+    qs('#votingList').addEventListener('click', e=>{
+      const btn = e.target.closest('button.btn-vote')
+      if(!btn) return
+      if(state.voted) return alert('Du hast schon abgestimmt (auf diesem Gerät).')
+      const id = btn.dataset.id
+      state.names = state.names.map(n=>n.id===id?{...n,votes:n.votes+1}:n)
+      state.voted = true
+      save(state)
+    })
+
+    qs('#clearVotes').addEventListener('click', ()=>{
+      if(!confirm('Alle Stimmen zurücksetzen?')) return
+      state.names = state.names.map(n=>({...n,votes:0}))
+      state.voted = false
+      save(state)
+    })
+
+    qs('#endBtn').addEventListener('click', ()=>{
+      renderResults()
+      alert('Abstimmung beendet! Ergebnisse siehe unten.')
+    })
+
+    qs('#exportBtn').addEventListener('click', ()=>{
+      const blob = new Blob([JSON.stringify(state,null,2)], {type:'application/json'})
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href=url; a.download='dayouth_results.json'; a.click()
+      URL.revokeObjectURL(url)
+    })
+  </script></body>
+</html>
